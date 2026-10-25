@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Browser game for learning vim motions beyond hjkl: guided lessons, then targets scored against the fewest possible keystrokes.">
+<title>hjkl Detox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap">
+<style>
+/* Layout: editor pane left, scorecard + cheat sheet right; stacks on phones. */
+:root {
+  --bg: #eceef2; --panel: #f8f9fb; --ink: #1b2130; --muted: #5d6578; --rule: #d3d8e1;
+  --cursor: #d97a1e; --cursor-ink: #fff; --target: #0b8587; --cline: #e2e6ee;
+  --good: #2c7d45; --bad: #b0423a;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #13161c; --panel: #1a1e26; --ink: #dde2ea; --muted: #8b94a6; --rule: #2a303c;
+  --cursor: #f0a04a; --cursor-ink: #13161c; --target: #3cc3c5; --cline: #20252f;
+  --good: #5cc07a; --bad: #e57068; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #13161c; --panel: #1a1e26; --ink: #dde2ea; --muted: #8b94a6; --rule: #2a303c;
+  --cursor: #f0a04a; --cursor-ink: #13161c; --target: #3cc3c5; --cline: #20252f;
+  --good: #5cc07a; --bad: #e57068; color-scheme: dark }
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--ui); font-size: 15px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 32px; }
+.app { max-width: 1180px; margin: 0 auto; display: grid; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; }
+h1 { font-family: var(--mono); font-weight: 600; font-size: 26px; margin: 0; letter-spacing: -0.02em; }
+h1 span { color: var(--cursor); }
+header p { margin: 0; color: var(--muted); max-width: 62ch; flex: 1 1 300px; }
+nav { display: flex; flex-wrap: wrap; gap: 6px; }
+nav button, .btn { font: 600 13px var(--ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+nav button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+nav button:hover, .btn:hover { border-color: var(--muted); }
+button:focus-visible, #ed:focus-visible { outline: 2px solid var(--target); outline-offset: 2px; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+@media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
+.ed-wrap { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; min-width: 0; overflow: hidden; }
+#ed { position: relative; overflow-x: auto; outline: none; }
+#buf { font: 14px/1.95 var(--mono); margin: 0; padding: 12px 0; white-space: pre; }
+.row { display: block; padding-right: 16px; }
+.row.cl { background: var(--cline); }
+.ln { display: inline-block; width: 4ch; padding-right: 1.5ch; text-align: right; color: var(--muted); user-select: none; }
+.row.cl .ln { color: var(--cursor); font-weight: 600; text-align: left; }
+.row.tl .ln { color: var(--target); }
+.cur { background: var(--cursor); color: var(--cursor-ink); }
+.tgt { box-shadow: inset 0 0 0 2px var(--target); border-radius: 2px; animation: pulse 1.2s ease-in-out infinite; }
+.cur.tgt { animation: none; }
+@keyframes pulse { 50% { box-shadow: inset 0 0 0 2px transparent; } }
+#ed.hit { animation: flash .35s ease-out; }
+@keyframes flash { from { background: color-mix(in srgb, var(--target) 25%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .tgt, #ed.hit { animation: none; } }
+#overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--panel) 70%, transparent); font: 600 15px var(--ui); letter-spacing: .04em; cursor: pointer; }
+#status { display: flex; gap: 14px; font: 13px var(--mono); border-top: 1px solid var(--rule); padding: 6px 12px; white-space: pre; }
+#mode { font-weight: 600; color: var(--cursor); }
+#cmd { flex: 1; min-width: 0; overflow: hidden; }
+#pos { color: var(--muted); }
+aside { display: grid; gap: 12px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; display: grid; gap: 10px; }
+.label { font: 600 11px var(--ui); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat b { display: block; font: 600 24px var(--mono); font-variant-numeric: tabular-nums; }
+.sol { font: 14px var(--mono); color: var(--target); min-height: 1.3em; overflow-wrap: anywhere; }
+.btns { display: flex; flex-wrap: wrap; gap: 6px; }
+dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; }
+dt { font: 600 13px var(--mono); color: var(--cursor); }
+dd { margin: 0; color: var(--ink); }
+#log { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font: 13px var(--mono); max-height: 260px; overflow-y: auto; }
+#log li { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; border-bottom: 1px dashed var(--rule); padding-bottom: 6px; }
+#log .you { overflow-wrap: anywhere; }
+#log .par { color: var(--muted); grid-column: 1; overflow-wrap: anywhere; }
+.chip { grid-row: 1 / span 2; grid-column: 2; align-self: center; font: 600 12px var(--ui); padding: 2px 6px; border-radius: 3px; border: 1px solid currentColor; }
+.ok { color: var(--good); } .over { color: var(--bad); } .peek { color: var(--muted); }
+.summary b { font-family: var(--mono); }
+.pc { position: relative; }
+.pc::before { content: attr(data-p); position: absolute; left: 0; bottom: 88%; font: 600 9px/1 var(--mono); color: var(--muted); white-space: nowrap; pointer-events: none; }
+#guide { font: 13px var(--ui); color: var(--muted); border-top: 1px dashed var(--rule); padding: 6px 12px; min-height: 1.4em; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+#guide span { flex: 1 1 220px; color: var(--ink); }
+.mini { font: 600 11px var(--ui); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: none; border: 1px solid var(--rule); border-radius: 3px; padding: 2px 6px; cursor: pointer; }
+.seg { display: inline-flex; margin-right: 10px; }
+.seg button { border-radius: 0; }
+.seg button:first-child { border-radius: 4px 0 0 4px; }
+.seg button:last-child { border-radius: 0 4px 4px 0; border-left: 0; }
+.seg button[aria-pressed="true"] { background: var(--cursor); color: var(--cursor-ink); border-color: var(--cursor); }
+.btn:disabled { opacity: .45; cursor: default; }
+.big { font: 600 34px var(--mono); color: var(--cursor); line-height: 1; }
+.say, .hints p, .msg { margin: 0; line-height: 1.45; }
+.hints { display: grid; gap: 8px; border-left: 2px solid var(--target); padding-left: 10px; }
+code, kbd { font: 13px var(--mono); background: var(--cline); border-radius: 3px; padding: 0 4px; }
+.msg.ok { color: var(--good); } .msg.over { color: var(--bad); }
+#log .tip { grid-column: 1 / -1; color: var(--ink); font-size: 12px; line-height: 1.5; }
+.gh { position: relative; box-shadow: inset 0 0 0 1px var(--target); border-radius: 2px; }
+.gh::after { content: attr(data-n); position: absolute; top: -0.85em; right: -0.5em; font: 600 10px var(--ui); color: var(--target); }
+</style>
+<style>
+:root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1><span>h</span>jkl detox</h1>
+    <p><b>Learn</b> walks through each motion one at a time. <b>Practice</b> gives free targets: reach the teal box from the orange cursor in as few keys as you can, against a solver's par. Stuck? Press <kbd>Tab</kbd> for a hint.</p>
+    <nav id="drills" role="tablist" aria-label="Drill"></nav>
+  </header>
+  <main>
+    <section class="ed-wrap">
+      <div id="ed" tabindex="0" aria-label="Vim buffer, type motions here">
+        <pre id="buf"></pre>
+        <div id="overlay" hidden>Click here, then use vim motions</div>
+      </div>
+      <div id="status"><span id="mode">NORMAL</span><span id="cmd"></span><span id="pos"></span></div>
+      <div id="guide"><span id="guidetext"></span><button class="mini" id="pcbtn" type="button"></button></div>
+    </section>
+    <aside>
+      <div class="card" id="hud"></div>
+      <div class="card"><div class="label">Motions in this drill</div><dl id="sheet"></dl></div>
+      <div class="card" id="logcard"><div class="label">Your moves vs par</div><ol id="log"></ol></div>
+    </aside>
+  </main>
+</div>
+
+<script>
+// ---------- buffer + motions (shared by the game and the par solver) ----------
+const SNIPPETS = [String.raw`package capwap
+
+import (
+    "encoding/binary"
+    "errors"
+    "fmt"
+)
+
+var ErrShortHeader = errors.New("capwap: header too short")
+
+type Header struct {
+    Version uint8
+    HLen    uint8
+    RID     uint8
+    WBID    uint8
+    FragID  uint16
+}
+
+func ParseHeader(b []byte) (*Header, error) {
+    if len(b) < 8 {
+        return nil, ErrShortHeader
+    }
+    h := &Header{Version: b[0] >> 4}
+    h.HLen = (b[1] >> 3) & 0x1f
+    h.RID = ((b[1] & 0x07) << 2) | (b[2] >> 6)
+    h.WBID = (b[2] >> 1) & 0x1f
+    h.FragID = binary.BigEndian.Uint16(b[4:6])
+    if int(h.HLen)*4 > len(b) {
+        return nil, fmt.Errorf("hlen %d exceeds %d bytes", h.HLen, len(b))
+    }
+    return h, nil
+}`, String.raw`import json
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Station:
+    mac: str
+    rssi: int = -70
+    tags: list[str] = field(default_factory=list)
+
+    def is_weak(self, floor: int = -80) -> bool:
+        return self.rssi < floor
+
+
+def load_stations(path):
+    with open(path) as fh:
+        raw = json.load(fh)
+    stations = [Station(**item) for item in raw["stations"]]
+    weak = {s.mac: s.rssi for s in stations if s.is_weak()}
+    if not weak:
+        return stations, {}
+
+    for mac, rssi in sorted(weak.items(), key=lambda kv: kv[1]):
+        print(f"{mac:>17}  {rssi:4d} dBm")
+    return stations, weak`, String.raw`export function debounce(fn, wait = 200) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), wait);
+  };
+}
+
+const routes = {
+  "/": () => render(home()),
+  "/about": () => render(page("about", { title: "About" })),
+  "/posts/:id": ({ id }) => fetchPost(id).then(render),
+};
+
+function match(path) {
+  for (const [pattern, handler] of Object.entries(routes)) {
+    const keys = [];
+    const re = new RegExp(
+      "^" + pattern.replace(/:(\w+)/g, (_, k) => (keys.push(k), "([^/]+)")) + "$"
+    );
+    const m = path.match(re);
+    if (m) return () => handler(Object.fromEntries(keys.map((k, i) => [k, m[i + 1]])));
+  }
+  return () => render(notFound(path));
+}
+
+window.addEventListener("popstate", debounce(() => match(location.pathname)()));`];
+
+function makeBuf(text) {
+  const lines = text.split('\n'), flat = [], start = [], offs = [];
+  let o = 0;
+  lines.forEach((s, l) => {
+    start.push(flat.length); offs.push(o); o += s.length + 1;
+    if (!s.length) flat.push({ l, c: 0, ch: '' });
+    else for (let c = 0; c < s.length; c++) flat.push({ l, c, ch: s[c] });
+  });
+  return { lines, flat, start, offs, text, N: flat.length };
+}
+
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const idx = (B, l, c) => B.start[l] + clamp(c, 0, Math.max(0, B.lines[l].length - 1));
+const mv = (B, i) => ({ i, want: B.flat[i].c });
+const at = (B, l, c) => mv(B, idx(B, l, c));
+const firstNB = (B, l) => { const m = B.lines[l].search(/\S/); return at(B, l, m < 0 ? Infinity : m); };
+const toLine = (B, l) => firstNB(B, clamp(l, 0, B.lines.length - 1));
+const empty = (B, l) => B.lines[l].length === 0;
+const same = (B, a, b) => B.flat[a].l === B.flat[b].l;
+
+// char class: 'E' empty line, 0 blank, 1 punctuation (or any non-blank for WORDs), 2 keyword
+function cls(B, i, big) {
+  const ch = B.flat[i].ch;
+  if (ch === '') return 'E';
+  if (ch === ' ') return 0;
+  return big || !/\w/.test(ch) ? 1 : 2;
+}
+function fw(B, i, big) {
+  const c0 = cls(B, i, big); let j = i + 1;
+  if (c0 !== 0 && c0 !== 'E') while (j < B.N && same(B, j, j - 1) && cls(B, j, big) === c0) j++;
+  while (j < B.N && cls(B, j, big) === 0) j++;
+  return Math.min(j, B.N - 1);
+}
+function ew(B, i, big) {
+  let j = i + 1;
+  while (j < B.N && (cls(B, j, big) === 0 || cls(B, j, big) === 'E')) j++;
+  if (j >= B.N) return B.N - 1;
+  const c = cls(B, j, big);
+  while (j + 1 < B.N && same(B, j + 1, j) && cls(B, j + 1, big) === c) j++;
+  return j;
+}
+function bw(B, i, big) {
+  let j = i - 1;
+  while (j >= 0 && cls(B, j, big) === 0) j--;
+  if (j < 0) return 0;
+  const c = cls(B, j, big);
+  if (c === 'E') return j;
+  while (j > 0 && same(B, j - 1, j) && cls(B, j - 1, big) === c) j--;
+  return j;
+}
+function gew(B, i, big) {
+  const c0 = cls(B, i, big); let j = i - 1;
+  if (c0 !== 0 && c0 !== 'E') while (j >= 0 && same(B, j, j + 1) && cls(B, j, big) === c0) j--;
+  while (j >= 0 && cls(B, j, big) === 0) j--;
+  return Math.max(j, 0);
+}
+function vert(B, s, n) {
+  const l = B.flat[s.i].l, l2 = clamp(l + n, 0, B.lines.length - 1);
+  return l2 === l ? null : { i: idx(B, l2, s.want), want: s.want };
+}
+function para(B, s, d) {
+  const L = B.lines.length; let l = B.flat[s.i].l;
+  while (l >= 0 && l < L && empty(B, l)) l += d;
+  while (l >= 0 && l < L && !empty(B, l)) l += d;
+  if (l < 0) return mv(B, 0);
+  if (l >= L) return mv(B, B.N - 1);
+  return mv(B, B.start[l]);
+}
+const PAIR = { '(': ')', '[': ']', '{': '}', ')': '(', ']': '[', '}': '{' };
+function pct(B, s) {
+  const f = B.flat[s.i], ln = B.lines[f.l]; let c = f.c;
+  while (c < ln.length && !PAIR[ln[c]]) c++;
+  if (c >= ln.length) return null;
+  const o = ln[c], m = PAIR[o], d = '([{'.includes(o) ? 1 : -1;
+  // NOTE: ignores brackets inside strings and comments, unlike real vim
+  for (let i = B.start[f.l] + c, depth = 0; i >= 0 && i < B.N; i += d) {
+    const ch = B.flat[i].ch;
+    if (ch === o) depth++;
+    else if (ch === m && --depth === 0) return mv(B, i);
+  }
+  return null;
+}
+// f/F/t/T; rep=true for ; and , which skip an adjacent match after t/T
+function find(B, s, n, ch, k, rep) {
+  const { l, c } = B.flat[s.i], ln = B.lines[l];
+  const dir = 'ft'.includes(k) ? 1 : -1, till = 'tT'.includes(k);
+  let x = c + (till && rep ? dir : 0);
+  for (let q = 0; q < n; q++) {
+    x = dir > 0 ? ln.indexOf(ch, x + 1) : (x - 1 < 0 ? -1 : ln.lastIndexOf(ch, x - 1));
+    if (x < 0) return null;
+  }
+  return at(B, l, till ? x - dir : x);
+}
+function wordAt(B, s) {
+  const f = B.flat[s.i], ln = B.lines[f.l]; let c = f.c;
+  while (c < ln.length && !/\w/.test(ln[c])) c++;
+  if (c >= ln.length) return null;
+  let a = c, b = c;
+  while (a > 0 && /\w/.test(ln[a - 1])) a--;
+  while (b < ln.length && /\w/.test(ln[b])) b++;
+  return { w: ln.slice(a, b), off: B.offs[f.l] + a };
+}
+function search(B, s, re, dir, from) {
+  const f = B.flat[s.i], cur = from ?? B.offs[f.l] + f.c;
+  const ms = [...B.text.matchAll(re)].map(m => m.index);
+  const x = dir > 0 ? (ms.find(m => m > cur) ?? ms[0]) : (ms.findLast(m => m < cur) ?? ms.at(-1));
+  if (x === undefined) return null;
+  let l = 0;
+  while (l + 1 < B.offs.length && B.offs[l + 1] <= x) l++;
+  return at(B, l, x - B.offs[l]);
+}
+const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const rep = f => (B, s, c) => {
+  let t = s;
+  for (let q = 0; q < (c || 1); q++) { const u = f(B, t); if (!u || u.i === t.i) break; t = u; }
+  return t === s ? null : t;
+};
+const word = (fn, big) => rep((B, s) => mv(B, fn(B, s.i, big)));
+const MOT = {
+  h: (B, s, c) => { const f = B.flat[s.i]; return at(B, f.l, f.c - (c || 1)); },
+  l: (B, s, c) => { const f = B.flat[s.i]; return at(B, f.l, f.c + (c || 1)); },
+  j: (B, s, c) => vert(B, s, c || 1),
+  k: (B, s, c) => vert(B, s, -(c || 1)),
+  w: word(fw, 0), W: word(fw, 1), b: word(bw, 0), B: word(bw, 1),
+  e: word(ew, 0), E: word(ew, 1), ge: word(gew, 0), gE: word(gew, 1),
+  '0': (B, s) => at(B, B.flat[s.i].l, 0),
+  '^': (B, s) => firstNB(B, B.flat[s.i].l),
+  '$': (B, s, c) => { const l = clamp(B.flat[s.i].l + (c || 1) - 1, 0, B.lines.length - 1); return { i: idx(B, l, Infinity), want: Infinity }; },
+  gg: (B, s, c) => toLine(B, c ? c - 1 : 0),
+  G: (B, s, c) => toLine(B, c ? c - 1 : B.lines.length - 1),
+  '}': rep((B, s) => para(B, s, 1)),
+  '{': rep((B, s) => para(B, s, -1)),
+  '%': (B, s) => pct(B, s),
+};
+
+// ---------- par solver: Dijkstra over (position, wanted column), cost = keystrokes ----------
+const skey = s => s.i * 1024 + (s.want === Infinity ? 1023 : s.want);
+// edges whose result does not depend on the wanted column, so they can be cached per position
+function* fixedEdges(B, s, groups) {
+  const L = B.lines.length;
+  if (groups.includes('base')) for (const k of 'hl') { const t = MOT[k](B, s, 1); if (t) yield [k, t, 'base']; }
+  if (groups.includes('words')) for (const k of ['w', 'b', 'e', 'ge', 'W', 'B', 'E', 'gE']) {
+    let t = s;
+    for (let n = 1; n <= 9; n++) { const u = MOT[k](B, t, 1); if (!u) break; t = u; yield [(n > 1 ? n : '') + k, t, 'words']; }
+  }
+  if (groups.includes('line')) {
+    for (const k of ['0', '^', '$']) yield [k, MOT[k](B, s), 'line'];
+    for (const ch of new Set(B.lines[B.flat[s.i].l].replace(/ /g, '')))
+      for (const k of 'fFtT') for (let n = 1; n <= 3; n++) {
+        const t = find(B, s, n, ch, k); if (!t) break; yield [(n > 1 ? n : '') + k + ch, t, 'line'];
+      }
+  }
+  if (groups.includes('vert')) {
+    yield ['gg', MOT.gg(B, s), 'vert']; yield ['G', MOT.G(B, s), 'vert'];
+    for (let n = 2; n < L; n++) yield [n + 'G', toLine(B, n - 1), 'vert'];
+  }
+  if (groups.includes('blocks')) {
+    for (const k of '{}') {
+      let t = s;
+      for (let n = 1; n <= 3; n++) { const u = MOT[k](B, t, 1); if (!u) break; t = u; yield [(n > 1 ? n : '') + k, t, 'blocks']; }
+    }
+    const t = pct(B, s); if (t) yield ['%', t, 'blocks'];
+  }
+}
+function edges(B, s, groups) {
+  const cache = (B.cache ||= {})[groups] ||= new Map();
+  let out = cache.get(s.i);
+  if (!out) {
+    // keep only the cheapest edge per landing state
+    const best = new Map();
+    for (const e of fixedEdges(B, mv(B, s.i), groups)) {
+      const k = skey(e[1]);
+      if (!best.has(k) || best.get(k)[0].length > e[0].length) best.set(k, e);
+    }
+    cache.set(s.i, out = [...best.values()]);
+  }
+  out = out.slice();
+  const L = B.lines.length, maxN = groups.includes('vert') ? L : 1;
+  for (let n = 1; n <= maxN; n++) for (const k of 'jk') {
+    const t = vert(B, s, k === 'j' ? n : -n);
+    if (t) out.push([(n > 1 ? n : '') + k, t, n > 1 ? 'vert' : 'base']);
+  }
+  return out;
+}
+function solve(B, start, groups, maxCost) {
+  const dist = new Map([[skey(start), 0]]), prev = new Map(), buckets = [[start]];
+  for (let d = 0; d <= maxCost; d++) for (const s of buckets[d] || []) {
+    const k = skey(s);
+    if (dist.get(k) !== d) continue;
+    for (const [keys, t, grp] of edges(B, s, groups)) {
+      const nd = d + keys.length, tk = skey(t);
+      if (nd > maxCost || (dist.has(tk) && dist.get(tk) <= nd)) continue;
+      dist.set(tk, nd); prev.set(tk, { from: k, keys, grp, i: t.i });
+      (buckets[nd] ||= []).push(t);
+    }
+  }
+  return { dist, prev };
+}
+// pick a target whose cheapest route uses the drill's motions and clearly beats hjkl
+function plan(B, st, drill) {
+  const { dist, prev } = solve(B, st, drill.groups, 8);
+  const best = new Map();
+  for (const [k, d] of dist) { const i = Math.floor(k / 1024); if (!best.has(i) || dist.get(best.get(i)) > d) best.set(i, k); }
+  const path = k => { const out = []; while (prev.has(k)) { const p = prev.get(k); out.unshift(p); k = p.from; } return out; };
+  const s0 = B.flat[st.i], cands = [];
+  for (const [i, k] of best) {
+    const d = dist.get(k), f = B.flat[i];
+    if (d < 2 || !f.ch.trim() || Math.abs(f.l - s0.l) > (drill.maxDl ?? Infinity)) continue;
+    const naive = Math.abs(f.l - s0.l) + Math.abs(f.c - s0.c);
+    if (naive < d + drill.gap) continue;
+    const p = path(k);
+    if (p.some(e => drill.id === 'mixed' ? e.grp !== 'base' : e.grp === drill.groups[1])) cands.push({ i, d, p });
+  }
+  const pool = cands.filter(c => c.d >= 3).length ? cands.filter(c => c.d >= 3) : cands;
+  return pool[Math.floor(Math.random() * pool.length)] || null;
+}
+
+// ---------- teaching: plain-language motion descriptions, lessons, coaching ----------
+const DESC = {
+  h: 'left', l: 'right', j: 'down', k: 'up',
+  w: 'to the next word start', b: 'back to a word start', e: 'to a word end', ge: 'back to the previous word end',
+  W: 'to the next WORD start', B: 'back to a WORD start', E: 'to a WORD end', gE: 'back to the previous WORD end',
+  '0': 'to column 0', '^': 'to the first non-blank', '$': 'to the line end',
+  '{': 'up to the previous blank line', '}': 'down to the next blank line', '%': 'to the matching bracket',
+  gg: 'to the first line', G: 'to the last line', '*': 'to the next copy of the word under the cursor',
+  '#': 'to the previous copy of the word under the cursor', n: 'to the next match', N: 'to the previous match',
+  ';': 'repeat the last f/t', ',': 'repeat the last f/t the other way',
+};
+function explain(keys) {
+  if (keys[0] === '/') return `search forward for "${keys.slice(1).replace('⏎', '')}"`;
+  const [, cnt, m] = keys.match(/^([1-9]\d*)?(.*)$/);
+  if ((m === 'G' || m === 'gg') && cnt) return `to line ${cnt}`;
+  if ('jk'.includes(m) && cnt) return `${cnt} lines ${DESC[m]}`;
+  const times = cnt ? `${cnt}× ` : '';
+  if (m.length === 2 && 'fFtT'.includes(m[0])) {
+    const c = `"${m[1]}"`;
+    return times + { f: `onto the next ${c}`, F: `back onto ${c}`, t: `just before the next ${c}`, T: `back to just after ${c}` }[m[0]];
+  }
+  return times + DESC[m];
+}
+const FAMILY = {
+  words: 'Word motions cover most of it: w b e ge, or the WORD versions, maybe with a count.',
+  line: 'Finish inside the line: f or t to a character, or 0 ^ $.',
+  vert: 'Change lines with a count: read the relative number in the gutter, then {n}j or {n}k.',
+  blocks: 'Jump by block: } or { to a blank line, or % to a bracket.',
+};
+function coach(keys) {
+  const tips = new Set();
+  for (let i = 1, run = 1; i <= keys.length; i++) {
+    if (keys[i] === keys[i - 1]) { run++; continue; }
+    const k = keys[i - 1];
+    if (run >= 3 && 'jkwbe'.includes(k)) tips.add(`${k}×${run} is ${run}${k}`);
+    else if (run >= 3 && 'hl'.includes(k)) tips.add(`${k}×${run}: try f{char}, w or e`);
+    run = 1;
+  }
+  return [...tips];
+}
+// build one lesson step from spec: N = random count, ? = a character on the line, /? = a search word
+function lessonMove(B, s, spec) {
+  const f = B.flat[s.i], ln = B.lines[f.l], L = B.lines.length;
+  const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  if (spec === '/?') {
+    const w = pick([...new Set(B.text.match(/[A-Za-z_]\w{3,}/g))]);
+    return { keys: '/' + w + '⏎', t: search(B, s, new RegExp(escRe(w), 'g'), 1) };
+  }
+  if (spec === '*') {
+    const w = wordAt(B, s);
+    return w && { keys: '*', t: search(B, s, new RegExp('\\b' + escRe(w.w) + '\\b', 'g'), 1, w.off) };
+  }
+  let keys = spec;
+  if (spec === 'Nj' || spec === 'Nk') {
+    const room = spec === 'Nj' ? L - 1 - f.l : f.l;
+    if (room < 3) return null;
+    keys = rnd(3, Math.min(12, room)) + spec[1];
+  } else if (spec === 'NG') keys = rnd(1, L) + 'G';
+  const [, cnt, mot] = keys.match(/^([1-9]\d*)?(.*)$/), n = cnt ? +cnt : null;
+  if (mot[1] === '?') {
+    const fwd = 'ft'.includes(mot[0]);
+    const chars = [...new Set((fwd ? ln.slice(f.c + 2) : ln.slice(0, Math.max(0, f.c - 1))).replace(/\s/g, ''))];
+    if (!chars.length) return null;
+    const ch = pick(chars);
+    return { keys: (cnt || '') + mot[0] + ch, t: find(B, s, n || 1, ch, mot[0]) };
+  }
+  return { keys, t: MOT[mot](B, s, n) };
+}
+
+const DRILLS = [
+  { id: 'intro', name: 'Start here', groups: ['base', 'words'], gap: 2, reps: 1, minDist: 1, pre: ['w', 'b', 'e'],
+    text: `# hjkl detox: a quick tour
+
+The orange block is your cursor.
+The pulsing teal box is your target.
+Numbers on the left count lines from the cursor.
+
+func reach(cursor, target int) int {
+    steps := target - cursor
+    return steps
+}
+
+The bar under the buffer says what vim is waiting for.`,
+    sheet: [['h j k l', 'left, down, up, right'], ['Esc', 'cancel a half-typed command'], ['Tab', 'hint, in practice mode']],
+    lessons: [
+      ['l', 'The orange block is your cursor and the pulsing teal box is the target. Press l to step right.'],
+      ['j', 'j moves down a line. On the home row: h left, j down, k up, l right. The rest of this game is about needing them less.'],
+      ['Nj', 'Each number in the gutter is that line\'s distance from you. Type the number, then j, instead of tapping j over and over.'],
+      ['w', 'w jumps a whole word. The small grey letters above the text preview where w, b and e land from where you are.'],
+      ['e', 'e jumps to the end of a word. Find the e label first, then press it.'],
+      ['f?', 'f then a character jumps right onto it. After f, the bar under the buffer says it is waiting for the character.'],
+    ] },
+  { id: 'words', name: 'Words', groups: ['base', 'words'], gap: 2, pre: ['w', 'b', 'e', 'ge', 'W', 'B', 'E'], sheet: [
+    ['w / b', 'next / previous word start'], ['e / ge', 'next / previous word end'],
+    ['W B E gE', 'same, but a WORD is anything between spaces'], ['3w', 'counts work on all of them']],
+    lessons: [
+      ['w', 'w jumps to the start of the next word. Punctuation like ( or . is a word of its own.'],
+      ['b', 'b jumps back to the start of a word.'],
+      ['e', 'e jumps forward to the end of a word.'],
+      ['ge', 'ge jumps back to the end of the previous word.'],
+      ['W', 'W treats everything between spaces as one WORD, so b[0] or "fmt" is a single hop.'],
+      ['B', 'B jumps back a whole WORD.'],
+      ['E', 'E jumps to the end of a WORD.'],
+      ['3w', 'A count repeats the motion: 3w is w three times for two keys.'],
+    ] },
+  { id: 'line', name: 'Inside a line', groups: ['base', 'line', 'vert'], gap: 2, maxDl: 3, pre: ['0', '^', '$'], sheet: [
+    ['0 ^ $', 'column 0, first non-blank, line end'], ['f{c} F{c}', 'jump onto next / previous {c}'],
+    ['t{c} T{c}', 'stop just before {c}'], ['; ,', 'repeat last f/t forward / backward'], ['2f(', 'second ( to the right']],
+    lessons: [
+      ['^', '^ goes to the first non-blank character, past the indent.'],
+      ['$', '$ goes to the last character of the line.'],
+      ['0', '0 goes to column 0, indent included.'],
+      ['f?', 'f then a character lands on the next copy of that character in this line.'],
+      ['F?', 'F does the same backwards.'],
+      ['t?', 't stops one character before the match. Handy before ( or ".'],
+      ['T?', 'T goes backwards and stops just after the match.'],
+      ['2f?', 'A count picks the 2nd match instead of pressing f twice.'],
+    ] },
+  { id: 'vert', name: 'Lines', groups: ['base', 'vert', 'line'], gap: 2, sheet: [
+    ['7j 4k', 'read the count off the relative number'], ['12G', 'absolute line 12 (also :12 Enter)'],
+    ['gg G', 'first / last line'], ['^ $', 'then land on the column']],
+    lessons: [
+      ['Nj', 'The gutter shows each line\'s distance from the cursor. Type that number, then j.'],
+      ['Nk', 'Same upwards: the number, then k.'],
+      ['NG', 'A number then G jumps to that absolute line. The cursor line shows its absolute number.'],
+      ['G', 'G alone goes to the last line.'],
+      ['gg', 'gg goes to the first line.'],
+    ] },
+  { id: 'blocks', name: 'Blocks', groups: ['base', 'blocks', 'line', 'vert'], gap: 2, pre: ['{', '}', '%'], sheet: [
+    ['} {', 'next / previous blank line'], ['%', 'matching bracket; from elsewhere jumps to the first bracket on the line'],
+    ['2}', 'two paragraphs down']],
+    lessons: [
+      ['}', '} jumps down to the next blank line, the end of the current block.'],
+      ['{', '{ jumps up to the previous blank line.'],
+      ['%', '% jumps to the matching bracket. Off a bracket, it uses the first bracket to the right on the line.'],
+      ['2}', 'Counts work here too: 2} skips two blocks.'],
+    ] },
+  { id: 'mixed', name: 'Mixed', groups: ['base', 'words', 'line', 'vert', 'blocks'], gap: 4, pre: ['w', 'b', 'e', '^', '$', '{', '}', '%'], sheet: [
+    ['all of the above', 'par uses every motion from the other drills'], ['/pat ?pat', 'search forward / back, Enter to jump'],
+    ['n N', 'next / previous match'], ['* #', 'next / previous occurrence of the word under the cursor']],
+    lessons: [
+      ['/?', 'For far targets, search: / then a few letters, then Enter. A short prefix is often enough.'],
+      ['*', '* searches for the word under the cursor. n repeats, N goes back.'],
+    ] },
+];
+
+if (typeof document !== 'undefined') {
+  // ---------- game ----------
+  const ROUND = 10, REPS = 2;
+  const $ = id => document.getElementById(id);
+  const ed = $('ed');
+  let drill = DRILLS[0], mode = 'learn', B, st, target, lastF = null, lastS = null, pend = { cnt: '', pre: '' }, cmd = null;
+  let round, cur, les, snip = -1, lastMsg = '';
+
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  };
+  drill = store.get('hjkl-learned-intro') ? DRILLS[1] : DRILLS[0];
+  let labels = store.get('hjkl-labels') ?? true;
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const kbd = s => `<code>${esc(s)}</code>`;
+  const flash = () => { ed.classList.remove('hit'); void ed.offsetWidth; ed.classList.add('hit'); };
+  const randomStart = () => {
+    const ok = B.flat.map((f, i) => f.ch.trim() ? i : -1).filter(i => i >= 0);
+    return mv(B, ok[Math.floor(Math.random() * ok.length)]);
+  };
+
+  function newRound() {
+    snip = (snip + 1 + Math.floor(Math.random() * (SNIPPETS.length - 1))) % SNIPPETS.length;
+    B = makeBuf(drill.text || SNIPPETS[snip]); lastMsg = '';
+    st = firstNB(B, 0); lastF = lastS = cmd = null; pend = { cnt: '', pre: '' };
+    round = { n: 0, keys: 0, par: 0, t0: Date.now(), log: [], done: false };
+    if (mode === 'learn') {
+      les = { steps: drill.lessons.flatMap(l => Array(drill.reps || REPS).fill(l)), k: 0, msg: null, done: false };
+      setStep();
+    } else nextTarget();
+  }
+
+  // ----- learn mode: one motion at a time, must be done in the motion's own key count -----
+  function setStep() {
+    const [spec] = les.steps[les.k];
+    for (let tries = 0; tries < 60; tries++) {
+      const m = lessonMove(B, st, spec);
+      if (m && m.t && m.t.i !== st.i) {
+        const a = B.flat[st.i], b = B.flat[m.t.i];
+        if (Math.abs(a.l - b.l) + Math.abs(a.c - b.c) >= (drill.minDist || 2) && b.ch.trim()) {
+          les.start = st; les.keys = m.keys; target = { i: m.t.i };
+          cur = { keys: [] };
+          return render();
+        }
+      }
+      st = randomStart();
+    }
+    les.k++; // no spot in this snippet fits the step
+    les.k < les.steps.length ? setStep() : finishLesson();
+  }
+  function finishLesson() { les.done = true; store.set('hjkl-learned-' + drill.id, true); render(); }
+  function retry(msg) { les.msg = ['over', msg]; st = les.start; cur.keys = []; lastF = null; }
+  function lessonCheck() {
+    const n = cur.keys.length, need = [...les.keys].length;
+    if (st.i === target.i) {
+      if (n <= need) {
+        les.msg = ['ok', `${les.keys}: ${explain(les.keys)}`]; les.k++; flash();
+        return les.k >= les.steps.length ? finishLesson() : setStep();
+      }
+      retry(`You got there in ${n} keys. Now do it with ${les.keys}.`);
+    } else if (n >= need && !pend.cnt && !pend.pre && !cmd) {
+      retry(`That went elsewhere. Back to the start: type ${les.keys}.`);
+    }
+    render();
+  }
+
+  // ----- practice mode -----
+  function nextTarget() {
+    let p = plan(B, st, drill);
+    // dead end (e.g. word drill at the bottom of the file): restart from a random line
+    for (let tries = 0; !p && tries < 8; tries++) { st = randomStart(); p = plan(B, st, drill); }
+    if (!p) return newRound(); // every drill has a target from the top of a fresh snippet
+    target = p; cur = { keys: [], hint: 0, peek: false };
+    render();
+  }
+  function hint() {
+    if (mode !== 'practice' || round.done) return;
+    cur.hint = Math.min(3, cur.hint + 1);
+    if (cur.hint >= 2) cur.peek = true;
+    render();
+  }
+  function hit() {
+    const n = cur.keys.length;
+    round.n++; round.keys += n; round.par += target.d;
+    round.log.unshift({ you: cur.keys.join(''), n, p: target.p, d: target.d, peek: cur.peek, tips: coach(cur.keys) });
+    flash();
+    if (round.n >= ROUND) {
+      round.done = true; round.secs = Math.round((Date.now() - round.t0) / 1000);
+      const pct = Math.round(100 * round.par / round.keys), best = store.get('hjkl-best-' + drill.id);
+      round.pct = pct; round.best = best;
+      if (!best || pct > best.pct) store.set('hjkl-best-' + drill.id, { pct, secs: round.secs });
+      render();
+    } else nextTarget();
+  }
+
+  // ----- vim key handling -----
+  function go(name, arg) {
+    const c = pend.cnt ? +pend.cnt : null; let t = null;
+    if (name === ';' || name === ',') {
+      if (lastF) t = find(B, st, c || 1, lastF.ch, name === ';' ? lastF.k : { f: 'F', F: 'f', t: 'T', T: 't' }[lastF.k], true);
+    } else if ('fFtT'.includes(name)) {
+      lastF = { k: name, ch: arg }; t = find(B, st, c || 1, arg, name);
+    } else if (name === '*' || name === '#') {
+      const w = wordAt(B, st);
+      if (w) { lastS = { re: new RegExp('\\b' + escRe(w.w) + '\\b', 'g'), dir: name === '*' ? 1 : -1 }; t = search(B, st, lastS.re, lastS.dir, w.off); }
+    } else if (name === 'n' || name === 'N') {
+      if (lastS) for (let q = 0, s = st; q < Math.min(c || 1, 999) && s; q++) s = t = search(B, s, lastS.re, name === 'n' ? lastS.dir : -lastS.dir);
+    } else t = MOT[name](B, st, c, arg);
+    const keys = (c || '') + name + (arg || '');
+    lastMsg = t && t.i !== st.i ? `${keys}: ${explain(keys)}` : `${keys}: no move, nothing to jump to from here`;
+    pend = { cnt: '', pre: '' };
+    if (t) st = t;
+    after();
+  }
+  function runCmd() {
+    const { ch, text } = cmd; cmd = null;
+    if (ch === ':') { if (/^\d+$/.test(text)) st = toLine(B, +text - 1); }
+    else if (text) {
+      let re; try { re = new RegExp(text, 'g'); } catch { re = new RegExp(escRe(text), 'g'); }
+      lastS = { re, dir: ch === '/' ? 1 : -1 };
+      lastMsg = `${ch}${text}: search ${ch === '/' ? 'forward' : 'backward'} for "${text}", n repeats`;
+      st = search(B, st, re, lastS.dir) || st;
+    }
+    after();
+  }
+  function after() {
+    if (mode === 'learn') return lessonCheck();
+    if (st.i === target.i) return hit();
+    if (!cur.hint && cur.keys.length > target.d + 2) cur.hint = 1; // stuck: nudge without spoiling
+    render();
+  }
+  function press(k) {
+    cur.keys.push({ Escape: '⎋', Enter: '⏎', Backspace: '⌫' }[k] || k);
+    if (cmd) {
+      if (k === 'Escape') cmd = null;
+      else if (k === 'Backspace') cmd.text ? (cmd.text = cmd.text.slice(0, -1)) : (cmd = null);
+      else if (k === 'Enter') return runCmd();
+      else if (k.length === 1) cmd.text += k;
+      return after();
+    }
+    if (pend.pre && 'fFtT'.includes(pend.pre)) return k.length === 1 ? go(pend.pre, k) : reset();
+    if (pend.pre === 'g') { const m = { g: 'gg', e: 'ge', E: 'gE' }[k]; return m ? go(m) : reset(); }
+    if (/^\d$/.test(k) && (k !== '0' || pend.cnt)) { pend.cnt += k; return render(); }
+    if ('fFtTg'.includes(k)) { pend.pre = k; return render(); }
+    if ('/?:'.includes(k)) { cmd = { ch: k, text: '' }; pend = { cnt: '', pre: '' }; return render(); }
+    if (MOT[k] || ';,nN*#'.includes(k)) return go(k);
+    reset();
+  }
+  function reset() { pend = { cnt: '', pre: '' }; after(); }
+  const finished = () => (mode === 'learn' ? les.done : round.done);
+
+  ed.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key;
+    if (k === 'Tab' && !finished()) { e.preventDefault(); return hint(); }
+    if (k.length > 1 && !['Escape', 'Enter', 'Backspace'].includes(k)) return;
+    e.preventDefault();
+    if (finished()) {
+      if (k === 'Enter') nextAfterDone();
+      return;
+    }
+    press(k);
+  });
+  ed.addEventListener('focus', () => { $('overlay').hidden = true; });
+  ed.addEventListener('blur', () => { $('overlay').hidden = false; });
+  $('overlay').addEventListener('click', () => ed.focus());
+
+  function nextAfterDone() {
+    if (drill.id === 'intro') { drill = DRILLS[1]; mode = 'learn'; } else if (mode === 'learn') mode = 'practice';
+    newRound();
+  }
+  function guideText() {
+    if (cmd) return cmd.ch === ':' ? 'Type a line number, then Enter. Esc cancels.' : `Type text to search ${cmd.ch === '/' ? 'forward' : 'backward'}, Enter to jump, Esc to cancel.`;
+    if (pend.pre && 'fFtT'.includes(pend.pre)) return `${pend.cnt}${pend.pre}: now type the character to ${{ f: 'jump onto', F: 'jump back onto', t: 'stop just before', T: 'stop just after' }[pend.pre]}.`;
+    if (pend.pre === 'g') return 'g: then g for the first line, e for the previous word end, E for the previous WORD end.';
+    if (pend.cnt) return `Count ${pend.cnt}: now a motion. ${pend.cnt}j goes ${pend.cnt} lines down, ${pend.cnt}w ${pend.cnt} words on, ${pend.cnt}G to line ${pend.cnt}.`;
+    if (lastMsg) return lastMsg;
+    return labels && drill.pre?.length ? 'Grey labels above the text show where each motion lands from the cursor.' : 'Move with vim keys. The gutter shows each line\'s distance from the cursor.';
+  }
+  $('pcbtn').addEventListener('click', () => { labels = !labels; store.set('hjkl-labels', labels); render(); ed.focus(); });
+
+  // ----- rendering -----
+  function render() {
+    const s = B.flat[st.i], tg = target && !finished() ? B.flat[target.i] : null;
+    const pc = new Map();
+    if (labels && !finished()) for (const m of drill.pre || []) {
+      const t = MOT[m](B, st);
+      if (t && t.i !== st.i) pc.set(t.i, (pc.has(t.i) ? pc.get(t.i) + ' ' : '') + m);
+    }
+    const ghosts = new Map(mode === 'practice' && cur.hint >= 3 ? target.p.slice(0, -1).map((e, n) => [e.i, n + 1]) : []);
+    $('buf').innerHTML = B.lines.map((ln, l) => {
+      const num = l === s.l ? String(l + 1) : String(Math.abs(l - s.l));
+      const text = ln.length ? ln : ' ';
+      let out = '';
+      for (let c = 0; c < text.length; c++) {
+        const isC = l === s.l && c === s.c, isT = tg && l === tg.l && c === tg.c, g = ghosts.get(B.start[l] + c), p = pc.get(B.start[l] + c);
+        const cl = [isC && 'cur', isT && 'tgt', g && !isC && !isT && 'gh', p && 'pc'].filter(Boolean).join(' ');
+        out += cl ? `<span class="${cl}"${g ? ` data-n="${g}"` : ''}${p ? ` data-p="${esc(p)}"` : ''}>${esc(text[c])}</span>` : esc(text[c]);
+      }
+      return `<span class="row${l === s.l ? ' cl' : ''}${tg && l === tg.l ? ' tl' : ''}"><span class="ln">${num}</span>${out}</span>`;
+    }).join('');
+    $('mode').textContent = cmd ? '' : 'NORMAL';
+    $('cmd').textContent = cmd ? cmd.ch + cmd.text + '█' : pend.cnt + pend.pre;
+    $('guidetext').textContent = guideText();
+    $('pcbtn').textContent = labels ? 'Labels on' : 'Labels off';
+    $('pcbtn').hidden = !drill.pre?.length;
+    $('pos').textContent = `${s.l + 1}:${s.c + 1}`;
+
+    $('drills').innerHTML =
+      `<span class="seg">${['learn', 'practice'].map(m => `<button data-mode="${m}" aria-pressed="${m === mode}">${m}</button>`).join('')}</span>` +
+      DRILLS.map(d => `<button role="tab" data-id="${d.id}" aria-selected="${d === drill}">${d.name}${store.get('hjkl-learned-' + d.id) ? ' ✓' : ''}</button>`).join('');
+    $('sheet').innerHTML = drill.sheet.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+    $('logcard').hidden = mode === 'learn';
+    $('log').innerHTML = round.log.map(r => {
+      const chip = r.peek ? ['peek', 'peeked'] : r.n <= r.d ? ['ok', r.n < r.d ? 'under par' : 'par'] : ['over', '+' + (r.n - r.d)];
+      const why = r.n > r.d ? `<span class="tip">${[...r.tips, ...r.p.map(e => `${e.keys}: ${explain(e.keys)}`)].map(esc).join('<br>')}</span>` : '';
+      return `<li><span class="you">${esc(r.you)} (${r.n})</span><span class="par">par ${esc(r.p.map(e => e.keys).join(''))} (${r.d})</span><span class="chip ${chip[0]}">${chip[1]}</span>${why}</li>`;
+    }).join('') || '<li><span class="par">Hit a target and your keys show up here. Over par, you get the par moves explained.</span></li>';
+    $('hud').innerHTML = mode === 'learn' ? learnHud() : round.done ? doneHud() : practiceHud();
+  }
+  function learnHud() {
+    if (les.done) return `
+      <div class="label">${drill.name} · ${drill.id === 'intro' ? 'tour' : 'lesson'} done</div>
+      ${drill.id === 'intro' ? `<p class="say">That's the whole interface. Each drill has two modes:</p>
+      <p class="say"><b>Learn</b> teaches one motion at a time. <b>Practice</b> drops free targets and scores you against par, the fewest keys possible. Press Tab there when stuck.</p>
+      <div class="btns"><button class="btn" data-act="next">Start the Words lesson (Enter)</button></div>` : `
+      <p class="say">You did every motion in this lesson. Practice mode gives you free targets with a par to beat.</p>`}
+      ${drill.id === 'intro' ? '' : '<div class="btns"><button class="btn" data-act="practice">Practice (Enter)</button><button class="btn" data-act="restart">Repeat lesson</button></div>'}`;
+    const [, say] = les.steps[les.k];
+    return `
+      <div class="label">Learn · ${drill.name} · step ${les.k + 1} of ${les.steps.length}</div>
+      <div class="big">${esc(les.keys)}</div>
+      <p class="say">${esc(say)}</p>
+      <p class="say">Type ${kbd(les.keys)} to reach the target: ${esc(explain(les.keys))}. Keys so far: ${cur.keys.length} of ${[...les.keys].length}.</p>
+      ${les.msg ? `<p class="msg ${les.msg[0]}">${les.msg[0] === 'ok' ? '✓ ' : ''}${esc(les.msg[1])}</p>` : ''}
+      <div class="btns"><button class="btn" data-act="skip">Skip step</button>${drill.id === 'intro' ? '<button class="btn" data-act="next">Skip the tour</button>' : '<button class="btn" data-act="practice">Go to practice</button>'}</div>`;
+  }
+  function practiceHud() {
+    const best = store.get('hjkl-best-' + drill.id), p = target.p;
+    const fams = [...new Set(p.map(e => e.grp).filter(g => g !== 'base'))];
+    const hints = [
+      fams.map(g => FAMILY[g]).join(' '),
+      `Start with ${kbd(p[0].keys)}: ${esc(explain(p[0].keys))}.`,
+      `Full route, numbered on the buffer:<br>${p.map((e, n) => `${n + 1}. ${kbd(e.keys)} ${esc(explain(e.keys))}`).join('<br>')}`,
+    ].slice(0, cur.hint);
+    return `
+      <div class="label">${drill.name} · target ${round.n + 1} of ${ROUND}${best ? ` · best ${best.pct}%` : ''}</div>
+      <div class="stats">
+        <div class="stat"><span class="label">Keys</span><b>${cur.keys.length}</b></div>
+        <div class="stat"><span class="label">Par</span><b>${target.d}</b></div>
+        <div class="stat"><span class="label">Round</span><b>${round.keys}/${round.par}</b></div>
+      </div>
+      ${hints.length ? `<div class="hints">${hints.map(h => `<p>${h}</p>`).join('')}</div>` : ''}
+      <div class="btns"><button class="btn" data-act="hint"${cur.hint >= 3 ? ' disabled' : ''}>${cur.hint ? 'More hint' : 'Hint'} (Tab)</button><button class="btn" data-act="restart">New round</button></div>`;
+  }
+  function doneHud() {
+    return `
+      <div class="label">Round done</div>
+      <div class="summary">${round.keys} keys against par ${round.par}: <b>${round.pct}%</b> efficiency in ${Math.floor(round.secs / 60)}:${String(round.secs % 60).padStart(2, '0')}.
+      ${round.best ? `Previous best ${round.best.pct}%.` : 'First round on this drill.'}</div>
+      <div class="btns"><button class="btn" data-act="restart">Next round (Enter)</button></div>`;
+  }
+
+  $('hud').addEventListener('click', e => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'hint') hint();
+    if (act === 'restart') newRound();
+    if (act === 'practice') { mode = 'practice'; newRound(); }
+    if (act === 'next') { drill = DRILLS[0]; nextAfterDone(); }
+    if (act === 'skip') { les.msg = null; les.k++; les.k < les.steps.length ? setStep() : finishLesson(); }
+    ed.focus();
+  });
+  $('drills').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.mode) mode = b.dataset.mode;
+    else drill = DRILLS.find(d => d.id === b.dataset.id);
+    newRound(); ed.focus();
+  });
+
+  newRound();
+  ed.focus();
+}
+</script>
+</body>
+</html>
