@@ -75,6 +75,7 @@ dd { margin: 0; color: var(--ink); }
 .chip { grid-row: 1 / span 2; grid-column: 2; align-self: center; font: 600 12px var(--ui); padding: 2px 6px; border-radius: 3px; border: 1px solid currentColor; }
 .ok { color: var(--good); } .over { color: var(--bad); } .peek { color: var(--muted); }
 .summary b { font-family: var(--mono); }
+.note { margin: 0; font-size: 13px; color: var(--muted); }
 .pc { position: relative; }
 .pc::before { content: attr(data-p); position: absolute; left: 0; bottom: 88%; font: 600 9px/1 var(--mono); color: var(--muted); white-space: nowrap; pointer-events: none; }
 #guide { font: 13px var(--ui); color: var(--muted); border-top: 1px dashed var(--rule); padding: 6px 12px; min-height: 1.4em; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
@@ -832,6 +833,7 @@ if (typeof document !== 'undefined') {
         <div class="stat"><span class="label">Par</span><b>${target.d}</b></div>
         <div class="stat"><span class="label">Round</span><b>${round.keys}/${round.par}</b></div>
       </div>
+      <p class="note">Par: the fewest keys the game found for this target. It skips search, ; , and Space, so those can beat it.</p>
       ${hints.length ? `<div class="hints">${hints.map(h => `<p>${h}</p>`).join('')}</div>` : ''}
       <div class="btns"><button class="btn" data-act="hint"${cur.hint >= 3 ? ' disabled' : ''}>${cur.hint ? 'More hint' : 'Hint'} (Tab)</button><button class="btn" data-act="restart">New round</button></div>`;
   }
