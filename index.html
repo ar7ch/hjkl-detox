@@ -344,6 +344,9 @@ const MOT = {
   '}': rep((B, s) => para(B, s, 1)),
   '{': rep((B, s) => para(B, s, -1)),
   '%': (B, s) => pct(B, s),
+  // Space and Backspace step one character and wrap across lines
+  ' ': rep((B, s) => (s.i + 1 < B.N ? mv(B, s.i + 1) : null)),
+  Backspace: rep((B, s) => (s.i > 0 ? mv(B, s.i - 1) : null)),
 };
 
 // ---------- par solver: Dijkstra over (position, wanted column), cost = keystrokes ----------
@@ -431,6 +434,7 @@ function plan(B, st, drill) {
 // ---------- teaching: plain-language motion descriptions, lessons, coaching ----------
 const DESC = {
   h: 'left', l: 'right', j: 'down', k: 'up',
+  ' ': 'right, wrapping to the next line', Backspace: 'left, wrapping to the previous line',
   w: 'to the next word start', b: 'back to a word start', e: 'to a word end', ge: 'back to the previous word end',
   W: 'to the next WORD start', B: 'back to a WORD start', E: 'to a WORD end', gE: 'back to the previous WORD end',
   '0': 'to column 0', '^': 'to the first non-blank', '$': 'to the line end',
@@ -684,8 +688,8 @@ if (typeof document !== 'undefined') {
     } else if (name === 'n' || name === 'N') {
       if (lastS) for (let q = 0, s = st; q < Math.min(c || 1, 999) && s; q++) s = t = search(B, s, lastS.re, name === 'n' ? lastS.dir : -lastS.dir);
     } else t = MOT[name](B, st, c, arg);
-    const keys = (c || '') + name + (arg || '');
-    lastMsg = t && t.i !== st.i ? `${keys}: ${explain(keys)}` : `${keys}: no move, nothing to jump to from here`;
+    const keys = (c || '') + name + (arg || ''), shown = keys.replace(' ', '␣').replace('Backspace', '⌫');
+    lastMsg = t && t.i !== st.i ? `${shown}: ${explain(keys)}` : `${shown}: no move, nothing to jump to from here`;
     pend = { cnt: '', pre: '' };
     if (t) st = t;
     after();
@@ -708,7 +712,7 @@ if (typeof document !== 'undefined') {
     render();
   }
   function press(k) {
-    cur.keys.push({ Escape: '⎋', Enter: '⏎', Backspace: '⌫' }[k] || k);
+    cur.keys.push({ Escape: '⎋', Enter: '⏎', Backspace: '⌫', ' ': '␣' }[k] || k);
     if (cmd) {
       if (k === 'Escape') cmd = null;
       else if (k === 'Backspace') cmd.text ? (cmd.text = cmd.text.slice(0, -1)) : (cmd = null);

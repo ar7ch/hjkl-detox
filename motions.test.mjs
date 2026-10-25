@@ -58,3 +58,10 @@ test('explanations and coaching', () => {
   assert.equal(g.explain('0'), 'to column 0');
   assert.deepEqual([...g.coach(['j', 'j', 'j', 'l'])], ['j×3 is 3j']);
 });
+
+test('space and backspace wrap across lines', () => {
+  const eol = { i: 10, want: 10 }; // "z" at the end of line 0
+  assert.deepEqual(pos(g.MOT[' '](B, eol)), [1, 0]);
+  assert.deepEqual(pos(g.MOT.Backspace(B, g.MOT[' '](B, eol))), [0, 10]);
+  assert.deepEqual(pos(g.MOT[' '](B, start, 3)), [0, 3]);
+});
